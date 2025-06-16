@@ -12,6 +12,8 @@ jobs:
   release:
     name: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,9 +21,11 @@ jobs:
       - name: Install Rust ${{ env.RUST_STABLE_VER }}
         run: rustup toolchain install ${{ env.RUST_STABLE_VER }}
 
+      - name: Restore cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Build
         run: cargo build --release
-
 
       - name: Create release
         id: create_release
