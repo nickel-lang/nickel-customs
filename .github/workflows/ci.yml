@@ -18,9 +18,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust ${{ env.RUST_STABLE_VER }}
-        run:
-         - rustup toolchain install ${{ env.RUST_STABLE_VER }}
-         - rustup component add clippy
+        run: |
+         rustup toolchain install ${{ env.RUST_STABLE_VER }}
+         rustup component add clippy
 
       - name: Run cargo fmt
         run: cargo fmt --all --check
