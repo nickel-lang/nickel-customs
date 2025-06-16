@@ -1,0 +1,19 @@
+[package]
+name = "nickel-customs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.40", features = ["derive"] }
+gitpatch = "0.7.1"
+gix = { version = "0.70.0", features = ["blocking-http-transport-reqwest-rust-tls"]}
+miette = { version = "7.6.0", features = ["fancy"] }
+nickel-lang-core = "0.13.0"
+nickel-lang-git = "0.1.0"
+nickel-lang-package = "0.2.0"
+octocrab = "0.44.1"
+serde = "1.0.219"
+serde_json = "1.0.140"
+tempfile = "3.20.0"
+thiserror = "2.0.12"
+tokio = { version = "1.45.1", features = ["rt-multi-thread"] }
