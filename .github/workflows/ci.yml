@@ -20,7 +20,6 @@ jobs:
       - name: Install Rust ${{ env.RUST_STABLE_VER }}
         run: |
          rustup toolchain install ${{ env.RUST_STABLE_VER }}
-         rustup component add clippy
 
       - name: Run cargo fmt
         run: cargo fmt --all --check
@@ -29,7 +28,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run cargo clippy
-        run: cargo clippy --locked -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       - name: Run cargo test
         run: cargo test
