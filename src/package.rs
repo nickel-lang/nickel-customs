@@ -37,8 +37,7 @@ impl<'a> From<gitpatch::ParseError<'a>> for Error {
     }
 }
 
-pub fn changed_packages(diff: &str) -> Result<Vec<Package>, Error> {
-    let patches = Patch::from_multiple(diff)?;
+pub fn changed_packages(patches: Vec<Patch>) -> Result<Vec<Package>, Error> {
     let mut ret = Vec::new();
     for patch in patches {
         let path = patch.new.path;
@@ -262,7 +261,8 @@ index 0000000..17e1150
 
     #[test]
     fn test_changed_packages() {
-        let packages = changed_packages(SAMPLE_DIFF).unwrap();
+        let patches = Patch::from_multiple(SAMPLE_DIFF).unwrap();
+        let packages = changed_packages(patches).unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].version, SemVer::new(0, 2, 0));
     }
