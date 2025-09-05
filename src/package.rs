@@ -2,7 +2,7 @@ use std::path::Path;
 
 use gitpatch::Patch;
 use miette::{IntoDiagnostic as _, bail};
-use nickel_lang_core::error::report::report_as_str;
+use nickel_lang_core::error::report::{ColorOpt, report_as_str};
 use nickel_lang_git::{Spec, Target};
 use nickel_lang_package::{
     IndexDependency, ManifestFile,
@@ -192,7 +192,9 @@ impl<T> IntoDiagnostic<T> for Result<T, nickel_lang_package::error::Error> {
             Err(nickel_lang_package::error::Error::ManifestEval {
                 mut files, error, ..
             }) => {
-                bail!(report_as_str(&mut files, *error, Default::default()))
+                // ANSI codes don't seem to get rendered in github comments, so
+                // turn off color.
+                bail!(report_as_str(&mut files, *error, ColorOpt::Never))
             }
             Err(e) => bail!(e.to_string()),
         }
