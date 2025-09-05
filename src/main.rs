@@ -105,7 +105,9 @@ impl PackageReport {
         index: &PackageIndex<Shared>,
         pkg: Package,
     ) -> miette::Result<Self> {
-        let PreciseId::Github { org, name, .. } = &pkg.id;
+        let PreciseId::Github {
+            org, name, path, ..
+        } = &pkg.id;
         let permission =
             Permission::check(client, user.to_owned(), org.clone(), name.clone()).await?;
 
@@ -113,7 +115,8 @@ impl PackageReport {
         let status = if let Err(e) = package::fetch(&pkg, temp_dir.path()) {
             PackageStatus::FetchFailed(e.to_string())
         } else {
-            match package::check_manifest(&pkg, temp_dir.path(), index) {
+            let path = temp_dir.path().join(path);
+            match package::check_manifest(&pkg, &path, index) {
                 Ok(c) => PackageStatus::Manifest(Box::new(c)),
                 Err(e) => PackageStatus::EvalFailed(e.to_string()),
             }
@@ -135,12 +138,14 @@ impl PackageReport {
     }
 
     fn format(&self, f: &mut std::fmt::Formatter, indent: &str) -> std::fmt::Result {
-        let PreciseId::Github { org, name, .. } = &self.pkg.id;
+        let PreciseId::Github {
+            org, name, path, ..
+        } = &self.pkg.id;
         let perm = &self.permission;
         let indent_spaces = " ".repeat(indent.len());
         writeln!(
             f,
-            "{}package {org}/{name}, version {}",
+            "{}package {org}/{name}/{path}, version {}",
             indent, self.pkg.version
         )?;
         if perm.is_allowed {

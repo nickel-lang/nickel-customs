@@ -29,7 +29,6 @@
       {
         devShells.default = mkShell {
           nativeBuildInputs = [
-            gosmee
             rust-toolchain
           ];
         };
