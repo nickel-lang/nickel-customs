@@ -269,7 +269,8 @@ index 0000000..17e1150
 
     #[test]
     fn test_changed_packages_with_subdir() {
-        let packages = changed_packages(SAMPLE_DIFF_WITH_SUBDIR).unwrap();
+        let patches = Patch::from_multiple(SAMPLE_DIFF_WITH_SUBDIR).unwrap();
+        let packages = changed_packages(patches).unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(
             packages[0].id,

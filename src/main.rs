@@ -150,7 +150,6 @@ impl ReportItem for PackageReport {
         let PreciseId::Github {
             org, name, path, ..
         } = &self.pkg.id;
-        let PreciseId::Github { org, name, .. } = &self.pkg.id;
         let perm = &self.permission;
         let indent_spaces = " ".repeat(indent.len());
         writeln!(
@@ -294,5 +293,65 @@ async fn main() -> miette::Result<()> {
         Ok(())
     } else {
         bail!("Failing report")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gitpatch::Patch;
+
+    use crate::{Report, check_diff_paths};
+
+    const SAMPLE_CI_DIFF: &str = r#"
+diff --git a/.github/workflows/foo.yaml b/.github/workflows/foo.yaml
+index df1cd2a..2229806 100644
+--- a/.github/workflows/foo.yaml
++++ b/.github/workflows/foo.yaml
+@@ -1 +1,2 @@
+ foo
++bar
+"#;
+
+    const BAD_PATH_DIFF: &str = r#"
+diff --git a/weird_path/foo.yaml b/weird_path/foo.yaml
+index df1cd2a..2229806 100644
+--- a/weird_path/foo.yaml
++++ b/weird_path/foo.yaml
+@@ -1 +1,2 @@
+ foo
++bar
+"#;
+
+    #[test]
+    fn test_ci_changes() {
+        let mut reports = Vec::new();
+        let mut patches = Patch::from_multiple(SAMPLE_CI_DIFF).unwrap();
+        check_diff_paths(&mut patches, &mut reports);
+
+        // The CI patch should have been removed from the list.
+        assert!(patches.is_empty());
+        let report = Report::PackageReports(reports);
+        assert!(
+            report
+                .to_string()
+                .contains("this PR modifies .github/workflows/foo.yaml")
+        );
+        assert!(report.is_good());
+    }
+
+    #[test]
+    fn test_bad_path_changes() {
+        let mut reports = Vec::new();
+        let mut patches = Patch::from_multiple(BAD_PATH_DIFF).unwrap();
+        check_diff_paths(&mut patches, &mut reports);
+
+        assert!(patches.is_empty());
+        let report = Report::PackageReports(reports);
+        assert!(
+            report
+                .to_string()
+                .contains("this PR modifies weird_path/foo.yaml")
+        );
+        assert!(!report.is_good());
     }
 }
