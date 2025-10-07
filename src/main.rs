@@ -1,4 +1,5 @@
 use clap::Parser;
+use gitpatch::Patch;
 use miette::{IntoDiagnostic, bail};
 use nickel_lang_package::{
     config::Config,
@@ -67,7 +68,7 @@ impl Permission {
 
 enum Report {
     InvalidDiff(package::Error),
-    PackageReports(Vec<PackageReport>),
+    PackageReports(Vec<Box<dyn ReportItem>>),
 }
 
 impl Report {
@@ -85,13 +86,19 @@ impl std::fmt::Display for Report {
             Report::InvalidDiff(e) => writeln!(f, "❌ invalid index changes: {e}"),
             Report::PackageReports(package_reports) => {
                 for r in package_reports {
-                    r.format(f, " - ")?;
+                    r.format_with_indent(f, " - ")?;
                 }
                 Ok(())
             }
         }
     }
 }
+
+trait ReportItem {
+    fn is_good(&self) -> bool;
+    fn format_with_indent(&self, f: &mut std::fmt::Formatter, indent: &str) -> std::fmt::Result;
+}
+
 struct PackageReport {
     pkg: Package,
     permission: Permission,
@@ -128,7 +135,9 @@ impl PackageReport {
             status,
         })
     }
+}
 
+impl ReportItem for PackageReport {
     fn is_good(&self) -> bool {
         self.permission.is_allowed
             && match &self.status {
@@ -137,7 +146,7 @@ impl PackageReport {
             }
     }
 
-    fn format(&self, f: &mut std::fmt::Formatter, indent: &str) -> std::fmt::Result {
+    fn format_with_indent(&self, f: &mut std::fmt::Formatter, indent: &str) -> std::fmt::Result {
         let PreciseId::Github {
             org, name, path, ..
         } = &self.pkg.id;
@@ -151,26 +160,26 @@ impl PackageReport {
         if perm.is_allowed {
             writeln!(
                 f,
-                "{indent_spaces}* ✅ this PR is by {}, a collaborator on {}/{}",
+                "{indent_spaces}*✅ this PR is by {}, a collaborator on {}/{}",
                 perm.user, perm.org, perm.repo
             )?;
         } else {
             writeln!(
                 f,
-                "{indent_spaces}* ❌ this PR is by {}, who is not a public member of {}",
+                "{indent_spaces}*❌ this PR is by {}, who is not a public member of {}",
                 perm.user, perm.org
             )?;
         };
 
         if let PackageStatus::FetchFailed(e) = &self.status {
-            writeln!(f, "{indent_spaces}* ❌ failed to fetch package: {e}",)?;
+            writeln!(f, "{indent_spaces}*❌ failed to fetch package: {e}",)?;
         } else {
-            writeln!(f, "{indent_spaces}* ✅ fetched package",)?;
+            writeln!(f, "{indent_spaces}*✅ fetched package",)?;
 
             if let PackageStatus::EvalFailed(e) = &self.status {
-                writeln!(f, "{indent_spaces}* ❌ failed to evaluate manifest: {e}",)?;
+                writeln!(f, "{indent_spaces}*❌ failed to evaluate manifest: {e}",)?;
             } else {
-                writeln!(f, "{indent_spaces}* ✅ evaluated manifest",)?;
+                writeln!(f, "{indent_spaces}*✅ evaluated manifest",)?;
 
                 let PackageStatus::Manifest(checks) = &self.status else {
                     unreachable!()
@@ -183,22 +192,78 @@ impl PackageReport {
     }
 }
 
+/// A diagnostic for showing that an unexpected path was modified.
+struct PathReport {
+    is_good: bool,
+    path: String,
+}
+
+impl ReportItem for PathReport {
+    fn is_good(&self) -> bool {
+        self.is_good
+    }
+
+    fn format_with_indent(&self, f: &mut std::fmt::Formatter, indent: &str) -> std::fmt::Result {
+        let sym = if self.is_good { "⚠️" } else { "❌" };
+        let path = &self.path;
+        writeln!(f, "{indent}{sym} this PR modifies {path}")
+    }
+}
+
 enum PackageStatus {
     FetchFailed(String),
     EvalFailed(String),
     Manifest(Box<ManifestChecks>),
 }
 
+/// Checks the paths of modified files. Removes the ones that aren't modifying
+/// packages and adds diagnostic messages for them.
+fn check_diff_paths(patches: &mut Vec<Patch>, reports: &mut Vec<Box<dyn ReportItem>>) {
+    patches.retain(|patch| {
+        let path = &patch.new.path;
+        let mut parts = path.split('/');
+        if parts.next() != Some("b") {
+            reports.push(Box::new(PathReport {
+                is_good: false,
+                path: patch.new.path.clone().into_owned(),
+            }));
+            return false;
+        }
+
+        // Trim off the "b/" for a better error message.
+        let path_without_prefix = &patch.new.path[2..];
+        let dir = parts.next();
+        if dir != Some("github") {
+            // Modifications to our CI are not necessarily bad. Any other path
+            // is definitely a mistake.
+            let is_good = dir == Some(".github");
+            reports.push(Box::new(PathReport {
+                is_good,
+                path: path_without_prefix.to_owned(),
+            }));
+            return false;
+        }
+        true
+    });
+}
+
 async fn make_report(diff: &str, client: &Octocrab, user: &str) -> miette::Result<Report> {
-    let pkgs = match package::changed_packages(diff) {
+    let mut reports = Vec::new();
+    let mut patches = match Patch::from_multiple(diff) {
+        Ok(p) => p,
+        Err(e) => return Ok(Report::InvalidDiff(e.into())),
+    };
+    check_diff_paths(&mut patches, &mut reports);
+    let pkgs = match package::changed_packages(patches) {
         Ok(p) => p,
         Err(e) => return Ok(Report::InvalidDiff(e)),
     };
 
     let index = PackageIndex::refreshed(Config::new().into_diag()?).into_diag()?;
-    let mut reports = Vec::new();
     for pkg in pkgs {
-        reports.push(PackageReport::new(client, user, &index, pkg).await?);
+        reports.push(Box::new(
+            PackageReport::new(client, user, &index, pkg).await?,
+        ));
     }
 
     Ok(Report::PackageReports(reports))
@@ -228,5 +293,65 @@ async fn main() -> miette::Result<()> {
         Ok(())
     } else {
         bail!("Failing report")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gitpatch::Patch;
+
+    use crate::{Report, check_diff_paths};
+
+    const SAMPLE_CI_DIFF: &str = r#"
+diff --git a/.github/workflows/foo.yaml b/.github/workflows/foo.yaml
+index df1cd2a..2229806 100644
+--- a/.github/workflows/foo.yaml
++++ b/.github/workflows/foo.yaml
+@@ -1 +1,2 @@
+ foo
++bar
+"#;
+
+    const BAD_PATH_DIFF: &str = r#"
+diff --git a/weird_path/foo.yaml b/weird_path/foo.yaml
+index df1cd2a..2229806 100644
+--- a/weird_path/foo.yaml
++++ b/weird_path/foo.yaml
+@@ -1 +1,2 @@
+ foo
++bar
+"#;
+
+    #[test]
+    fn test_ci_changes() {
+        let mut reports = Vec::new();
+        let mut patches = Patch::from_multiple(SAMPLE_CI_DIFF).unwrap();
+        check_diff_paths(&mut patches, &mut reports);
+
+        // The CI patch should have been removed from the list.
+        assert!(patches.is_empty());
+        let report = Report::PackageReports(reports);
+        assert!(
+            report
+                .to_string()
+                .contains("this PR modifies .github/workflows/foo.yaml")
+        );
+        assert!(report.is_good());
+    }
+
+    #[test]
+    fn test_bad_path_changes() {
+        let mut reports = Vec::new();
+        let mut patches = Patch::from_multiple(BAD_PATH_DIFF).unwrap();
+        check_diff_paths(&mut patches, &mut reports);
+
+        assert!(patches.is_empty());
+        let report = Report::PackageReports(reports);
+        assert!(
+            report
+                .to_string()
+                .contains("this PR modifies weird_path/foo.yaml")
+        );
+        assert!(!report.is_good());
     }
 }
